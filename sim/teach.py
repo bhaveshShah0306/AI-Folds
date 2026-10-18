@@ -8,6 +8,7 @@ can be saved as a demonstration for training.
     python teach.py --task diagonal --view            # watch it in the MuJoCo viewer
     python teach.py --task half --episodes 50 --out demos/half.npz
     python teach.py --task diagonal --episodes 50 --cameras --out demos/diag_cam.npz
+    python teach.py --task half --episodes 100 --noise 0.3 --out demos/half.npz   # for training
 """
 
 import argparse
@@ -68,6 +69,7 @@ class StepTeacher:
         self.i = 0
         self.grip = -1.0
         self.wait = 0
+        self.settle = 0
         self.goal = None
 
     @property
@@ -98,15 +100,24 @@ class StepTeacher:
         cmd, point = self.steps[self.i]
         if cmd in ("close", "open"):
             self.grip = 1.0 if cmd == "close" else -1.0
+            holding = self.env.grasped_vertex is not None
             self.wait += 1
-            if self.wait >= 5:  # give the jaws a moment
-                self.wait = 0
-                self.i += 1
+            # Keep the command until the jaws have actually grabbed/let go, then
+            # one more step to settle (or give up after 10 steps if nothing to grab).
+            if holding == (cmd == "close") or self.wait >= 10:
+                self.settle += 1
+                if self.settle >= 2:
+                    self.wait = self.settle = 0
+                    self.i += 1
             return np.array([0.0, 0.0, 0.0, self.grip])
 
         if self.goal is None:
             self.goal = self._goal_for(cmd, point)
         delta = self.goal - self.env.target
+        if cmd == "down" and np.linalg.norm(delta) < 0.006:
+            # Start closing during the last few millimetres of the descent, like a
+            # person would; it also gives the policy a clear "close now" signal.
+            self.grip = 1.0
         if np.linalg.norm(delta) < self.tol:
             self.goal = None
             self.i += 1
@@ -114,10 +125,14 @@ class StepTeacher:
         return np.array([*move, self.grip])
 
 
-def run_episode(env, steps, seed, viewer=None, cameras=None):
+def run_episode(env, steps, seed, viewer=None, cameras=None, noise=0.0):
+    """Run the teacher once. With noise > 0 the executed moves are randomly nudged,
+    but the recorded action is still the teacher's clean correction, so a policy
+    trained on the data learns how to recover from small mistakes."""
     obs, _ = env.reset(seed=seed)
     teacher = StepTeacher(env, steps)
-    record = {"obs": [], "action": [], "reward": [], "landmarks": []}
+    rng = np.random.default_rng(seed)
+    record = {"obs": [], "action": [], "reward": [], "next_obs": [], "terminated": [], "landmarks": []}
     images = {name: [] for name in cameras or []}
     renderer = None
     if cameras:
@@ -132,8 +147,12 @@ def run_episode(env, steps, seed, viewer=None, cameras=None):
                 images[name].append(renderer.render())
         record["obs"].append(obs)
         record["action"].append(action)
-        obs, reward, terminated, truncated, info = env.step(action)
+        executed = action.copy()
+        executed[:3] += rng.normal(0.0, noise, 3)
+        obs, reward, terminated, truncated, info = env.step(executed)
         record["reward"].append(reward)
+        record["next_obs"].append(obs)
+        record["terminated"].append(terminated)
         record["landmarks"].append(info["landmarks"])
         if viewer is not None:
             viewer.sync()
@@ -155,6 +174,8 @@ def main():
     parser.add_argument("--view", action="store_true", help="open the MuJoCo viewer")
     parser.add_argument("--cameras", action="store_true", help="also record laptop + wrist camera images")
     parser.add_argument("--out", type=Path, help="save demonstrations to this .npz file")
+    parser.add_argument("--noise", type=float, default=0.0,
+                        help="randomly nudge executed moves (e.g. 0.3) so demos include recoveries")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -167,7 +188,7 @@ def main():
 
     episodes, successes = [], 0
     for ep in range(args.episodes):
-        demo, info = run_episode(env, STEPS[args.task], args.seed + ep, viewer, cameras)
+        demo, info = run_episode(env, STEPS[args.task], args.seed + ep, viewer, cameras, args.noise)
         successes += info["is_success"]
         dists = np.round(info.get("fold_distances", []) * 100, 1)
         print(f"episode {ep}: {len(demo['action'])} steps, success={info['is_success']}, "

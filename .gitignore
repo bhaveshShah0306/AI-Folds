@@ -5,3 +5,4 @@ venv/
 sim/demos/
 *.gif
 *.mp4
+sim/policies/

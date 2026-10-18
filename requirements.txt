@@ -2,3 +2,6 @@ mujoco>=3.3
 gymnasium>=1.0
 numpy
 pillow
+# Training (CPU is fine; on Windows/macOS `pip install torch` gets the CPU build)
+torch
+stable-baselines3

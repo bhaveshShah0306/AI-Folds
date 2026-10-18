@@ -4,6 +4,7 @@ Landmarks are the arm's equivalent of MediaPipe hand keypoints: the world-space
 position of every joint axis plus the gripper tip, recomputed each sim step.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import mujoco
@@ -18,9 +19,33 @@ JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_ro
 ARM_JOINTS = JOINTS[:5]
 TIP_SITE = "gripperframe"
 
-# Gripper joint targets (radians). The jaw opens towards the upper limit.
-GRIPPER_OPEN = 1.2
-GRIPPER_CLOSED = 0.0
+
+
+@dataclass
+class Gripper:
+    """Everything gripper-specific lives here, so a different gripper can be
+    swapped in without touching the environment or the training code.
+
+    The policy only ever sends a grip command in [-1, 1] (open ... close) and
+    sees `openness` in [0, 1] (shut ... fully open).
+    """
+
+    joint: str
+    open_target: float      # actuator target when commanded open
+    closed_target: float    # actuator target when commanded closed
+    hold_below: float = 0.3     # openness below which the gripper counts as holding
+    release_above: float = 0.25  # openness above which it lets go again
+
+    def target(self, grip_command):
+        return self.closed_target if grip_command > 0 else self.open_target
+
+    def openness(self, joint_pos):
+        span = self.open_target - self.closed_target
+        return float(np.clip((joint_pos - self.closed_target) / span, 0.0, 1.0))
+
+
+# The stock SO-101 jaw. Angles in radians; it opens towards the joint's upper limit.
+SO101_JAW = Gripper(joint="gripper", open_target=1.2, closed_target=0.0)
 
 
 def landmarks(model, data):

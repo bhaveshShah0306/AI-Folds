@@ -4,10 +4,13 @@ Action (4 floats in [-1, 1]):
     dx, dy, dz  move the gripper tip by up to MAX_STEP metres per step
     grip        > 0 closes the gripper, <= 0 opens it
 The gripper always points straight down; IK turns the tip target into joint angles.
+Gripper details (joint, angles, when it counts as holding) come from a `Gripper`
+in so101.py, so the policy only deals with a generic grip command and openness.
 
-Grasping is "assisted": closing the gripper within GRASP_RADIUS of the sheet pins
-the nearest sheet vertex to the jaws. Real cloth grasping in simulation is very
-fiddly, and this is the usual shortcut for learning the folding motion itself.
+Grasping is "assisted": once the gripper has closed within GRASP_RADIUS of the sheet,
+the nearest sheet vertex is pinned to it, and it's let go once the gripper has
+opened again. Real cloth grasping in simulation is very fiddly, and this is the
+usual shortcut for learning the folding motion itself.
 """
 
 import gymnasium as gym
@@ -15,7 +18,7 @@ import mujoco
 import numpy as np
 from gymnasium import spaces
 
-from so101 import FOLD_SCENE_XML, GRIPPER_CLOSED, GRIPPER_OPEN, IK, JOINTS, TIP_SITE, landmark_array
+from so101 import ARM_JOINTS, FOLD_SCENE_XML, IK, SO101_JAW, TIP_SITE, landmark_array
 
 GRID = 9                 # sheet is GRID x GRID vertices
 MAX_STEP = 0.01          # metres per env step
@@ -25,6 +28,11 @@ CONTROL_SUBSTEPS = 25    # 25 x 2 ms = 20 Hz control
 WORKSPACE_LO = np.array([0.10, -0.15, 0.005])
 WORKSPACE_HI = np.array([0.32, 0.15, 0.15])
 HOME_TIP = np.array([0.20, 0.0, 0.10])
+# Observations are scaled to roughly [-1, 1] so learners see centimetre-level
+# differences clearly without having to normalise inputs themselves.
+WS_CENTRE = (WORKSPACE_LO + WORKSPACE_HI) / 2
+WS_HALF = (WORKSPACE_HI - WORKSPACE_LO) / 2
+REL_SCALE = 0.1
 
 
 def vertex(ix, iy):
@@ -54,7 +62,7 @@ TASKS = {
 class FoldEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 20}
 
-    def __init__(self, task="diagonal", max_steps=200, randomize=True, render_mode=None):
+    def __init__(self, task="diagonal", max_steps=200, randomize=True, render_mode=None, gripper=SO101_JAW):
         self.model = mujoco.MjModel.from_xml_path(str(FOLD_SCENE_XML))
         self.data = mujoco.MjData(self.model)
         self.ik = IK(self.model)
@@ -63,21 +71,25 @@ class FoldEnv(gym.Env):
         self.max_steps = max_steps
         self.randomize = randomize
         self.render_mode = render_mode
+        self.gripper = gripper
         self._renderer = None
 
         m = self.model
         self.vertex_bodies = np.array([m.body(f"sheet_{i}").id for i in range(GRID * GRID)])
         self.vertex_qpos = np.array([m.jnt_qposadr[m.body_jntadr[b]] for b in self.vertex_bodies])
         self.rest_pos = m.body_pos[self.vertex_bodies].copy()
-        self.arm_qpos = np.array([m.jnt_qposadr[m.joint(j).id] for j in JOINTS])
-        self.arm_dof = np.array([m.jnt_dofadr[m.joint(j).id] for j in JOINTS])
+        self.arm_qpos = np.array([m.jnt_qposadr[m.joint(j).id] for j in ARM_JOINTS])
+        self.gripper_qpos = m.jnt_qposadr[m.joint(gripper.joint).id]
+        self.gripper_ctrl = m.actuator(gripper.joint).id
         self.grasp_eq = m.equality("grasp").id
         self.gripper_body = m.body("gripper").id
         self.tip_site = m.site(TIP_SITE).id
         self.corners = np.array([POINTS[k] for k in ("near_right", "near_left", "far_right", "far_left")])
 
         self.action_space = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
-        obs_dim = 6 + 3 + 1 + 4 * 3 + 3
+        # arm joints, gripper openness, tip, holding flag, corners, corners relative
+        # to the tip, sheet centre
+        obs_dim = 5 + 1 + 3 + 1 + 4 * 3 + 4 * 3 + 3
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(obs_dim,), dtype=np.float32)
 
     # ----------------------------------------------------------------- helpers
@@ -94,8 +106,12 @@ class FoldEnv(gym.Env):
             return None
         return int(np.where(self.vertex_bodies == self.model.eq_obj2id[self.grasp_eq])[0][0])
 
+    def openness(self):
+        return self.gripper.openness(self.data.qpos[self.gripper_qpos])
+
     def _set_grasp(self, close):
-        if close and self.grasped_vertex is None:
+        openness = self.openness()
+        if close and openness < self.gripper.hold_below and self.grasped_vertex is None:
             tip = self.tip_position()
             dists = np.linalg.norm(self.sheet_positions() - tip, axis=1)
             i = int(np.argmin(dists))
@@ -109,7 +125,7 @@ class FoldEnv(gym.Env):
                 self.model.eq_data[self.grasp_eq, :3] = local
                 self.model.eq_data[self.grasp_eq, 3:6] = 0.0
                 self.data.eq_active[self.grasp_eq] = 1
-        elif not close:
+        elif not close and openness > self.gripper.release_above:
             self.data.eq_active[self.grasp_eq] = 0
 
     def fold_distances(self):
@@ -118,12 +134,17 @@ class FoldEnv(gym.Env):
 
     def _obs(self):
         pos = self.sheet_positions()
+        tip = self.tip_position()
+        corners = pos[self.corners]
+        scale = lambda p: (p - WS_CENTRE) / WS_HALF
         return np.concatenate([
             self.data.qpos[self.arm_qpos],
-            self.tip_position(),
+            [self.openness()],
+            scale(tip),
             [1.0 if self.grasped_vertex is not None else 0.0],
-            pos[self.corners].ravel(),
-            pos.mean(axis=0),
+            scale(corners).ravel(),
+            ((corners - tip) / REL_SCALE).ravel(),
+            scale(pos.mean(axis=0)),
         ]).astype(np.float32)
 
     def landmarks(self):
@@ -150,10 +171,10 @@ class FoldEnv(gym.Env):
 
         self.target = HOME_TIP.copy()
         q, _ = self.ik.solve(self.target, np.zeros(5))
-        self.data.qpos[self.arm_qpos[:5]] = q
-        self.data.qpos[self.arm_qpos[5]] = GRIPPER_OPEN
+        self.data.qpos[self.arm_qpos] = q
+        self.data.qpos[self.gripper_qpos] = self.gripper.open_target
         self.data.ctrl[:5] = q
-        self.data.ctrl[5] = GRIPPER_OPEN
+        self.data.ctrl[self.gripper_ctrl] = self.gripper.open_target
         self.q_target = q
         mujoco.mj_forward(self.model, self.data)
         for _ in range(100):  # let the sheet settle
@@ -169,11 +190,11 @@ class FoldEnv(gym.Env):
         self.q_target, _ = self.ik.solve(self.target, self.q_target)
         close = action[3] > 0
         self.data.ctrl[:5] = self.q_target
-        self.data.ctrl[5] = GRIPPER_CLOSED if close else GRIPPER_OPEN
-        self._set_grasp(close)
+        self.data.ctrl[self.gripper_ctrl] = self.gripper.target(action[3])
 
         for _ in range(CONTROL_SUBSTEPS):
             mujoco.mj_step(self.model, self.data)
+        self._set_grasp(close)
         self.steps += 1
 
         dists = self.fold_distances()
