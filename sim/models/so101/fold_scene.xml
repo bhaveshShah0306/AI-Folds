@@ -1,0 +1,42 @@
+<mujoco model="so101_fold_scene">
+  <include file="so101_new_calib_camera.xml"/>
+
+  <option timestep="0.002"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <global azimuth="150" elevation="-30" offwidth="640" offheight="480"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4"
+             rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" friction="1 0.005 0.0001"/>
+    <!-- "laptop": a webcam facing the robot from across the table, ~45 cm away and 25 cm up.
+         Move it to match where your real laptop/webcam sits so sim and real images look alike. -->
+    <camera name="laptop" pos="0.62 0.12 0.25" xyaxes="-0.287 0.958 0 -0.446 -0.134 0.885" fovy="60"/>
+    <camera name="overhead" pos="0.22 0 0.6" xyaxes="0 -1 0 1 0 0"/>
+
+    <!-- The sheet to fold: a 12 cm x 12 cm square of 9x9 vertices in front of the arm.
+         Bump `young` up for something stiffer like paper, down for floppy cloth. -->
+    <flexcomp name="sheet" type="grid" count="9 9 1" spacing="0.015 0.015 0.015"
+              pos="0.22 0 0.003" radius="0.0015" mass="0.01" dim="2" rgba="0.9 0.2 0.2 1">
+      <contact condim="3" solref="0.003" selfcollide="none" friction="1 0.005 0.0001"/>
+      <edge equality="true" damping="0.002"/>
+      <elasticity young="3e3" poisson="0" thickness="0.002" elastic2d="bend"/>
+    </flexcomp>
+  </worldbody>
+
+  <!-- "Assisted grasp": the env rebinds this constraint to whichever sheet vertex is
+       nearest the jaws when the gripper closes, and switches it off when it opens. -->
+  <equality>
+    <connect name="grasp" body1="gripper" body2="sheet_0" anchor="0 0 0" active="false"
+             solref="0.01 1"/>
+  </equality>
+</mujoco>
