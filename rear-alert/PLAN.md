@@ -1,4 +1,4 @@
-# Rear Alert: 12-day plan (27 Oct to 7 Nov 2026, demo-ready by Diwali)
+# Rear Alert: plan for Wed 28 Oct to Sat 7 Nov 2026 (demo-ready by Diwali)
 
 A rear-facing camera on a Honda Activa 3G records traffic behind the scooter. Python
 detects and tracks vehicles, estimates how fast each one is closing in, and a trained
@@ -6,204 +6,198 @@ model decides when to light a **left** or **right** warning light on the handleb
 Everything is built and tested on the laptop with recorded rides first; the handlebar
 lights come last.
 
-**Budget:** 12 days x 5 hours = 60 hours. The 6th hour is **only** for catching up, never
-for new features. Diwali (Sun 8 Nov) is a day off.
+## The time you actually have
+
+Office is 10.5 h a day. Add 5 h of project, about 1 h of travel and 7.5 h of sleep, and
+that is already 24 h, with no time left for eating, bathing or family. That doesn't last a
+week, so this plan uses a budget you can keep up:
+
+| Days | Count | Hours each | Total |
+|---|---|---|---|
+| Weekdays (Wed 28 - Fri 30 Oct, Mon 2 - Fri 6 Nov) | 8 | 2 | 16 h |
+| Sat 31 Oct, Sun 1 Nov | 2 | 8 | 16 h |
+| Sat 7 Nov (Diwali eve, packaging only) | 1 | 5 | 5 h |
+| **Total** | | | **37 h** |
+
+Weekday session: **21:00 - 23:00**, lights out by 23:30. Weekends: two 4-hour halves
+with a long lunch break in between. This assumes Saturdays are off; if you work Saturdays,
+see "If you fall behind".
+
+That is enough for a **focused, working MVP** with two real AI components and numbers to
+show. It is not enough for the earlier 60-hour version, so these are cut: chessboard
+calibration, ground homography, a live test, a metrics web page and a virtual handlebar.
+
+### Night is fine for coding
+Only **recording** needs daylight. Record the **morning ride to office** every day
+(phone on the rear grab rail, about 10 min to set up). All coding happens in the evening
+on footage you already have.
 
 ---
 
 ## What gets built
 
 ```
-rear camera (phone / dash cam)          rides recorded on SD card, 2-3 days of commutes
+rear camera (phone, morning commutes + one weekend ride)
         |
         v
-[1] detect.py    YOLO11 (fine-tuned on Indian traffic: autos, bikes, buses...)   <- AI #1
+[1] detect.py    YOLO11, fine-tuned on your own frames (autos, two-wheelers...)  <- AI #1
 [2] track.py     ByteTrack: one ID per vehicle across frames
-[3] geometry.py  ground-plane homography -> metres behind / to the side
-                 bbox growth rate -> time-to-collision (TTC)
-[4] risk.py      gradient-boosted model: "will this vehicle pass dangerously
-                 close within 2 s?"  trained on your own rides                  <- AI #2
+[3] geometry.py  distance from box height (pinhole: Z = f * H_real / h_pixels)
+                 time-to-collision from how fast the box grows
+                 LEFT / CENTRE / RIGHT zone from where the box is in the frame
+[4] risk.py      LightGBM: "will this vehicle pass dangerously close within 2 s?"
+                 trained on your rides, compared against a simple TTC rule        <- AI #2
         |
-        +--> [5] api.py        FastAPI: rides, detections, events, metrics, WebSocket replay
+        +--> [5] api.py       FastAPI: rides, tracks, events + WebSocket replay
         |          |
         |          v
-        |    [6] web/          React + three.js (react-three-fiber): video + 3D
-        |                      bird's-eye view of vehicles around the scooter
+        |    [6] web/         React + three.js (react-three-fiber): video next to a
+        |                     3D top-down view of the vehicles behind you
         |
-        +--> [7] alert_out.py  pyserial -> ESP32 (MicroPython) -> 2 LED sticks on the handlebar
+        +--> [7] alert_out.py pyserial -> ESP32 (MicroPython) -> 2 LED sticks on the handlebar
 ```
 
-All Python except the web dashboard (TypeScript/React). The ESP32 runs MicroPython,
-so the hardware side is still Python too.
-
-### Why React and not Angular
-**React + `@react-three/fiber` + `@react-three/drei`.** It is the most used way to put
-three.js in a web app. You write the 3D scene as components, drei gives you ready-made
-camera controls, text and loaders, and Vite starts in seconds. Angular has `angular-three`,
-but it has far fewer examples and answers online, and with 12 days that matters.
-
-### Why there are two AI parts
-1. **Fine-tuned detector.** Off-the-shelf YOLO (COCO) has no "auto-rickshaw" class and
-   misses a lot of Indian two-wheelers. You label 300-400 frames from your own rides and
-   fine-tune, then report mAP before and after.
-2. **Learned alert model.** Instead of a hand-set "TTC < 2 s" rule, the labels come from
-   the future: a track counts as a *close pass* if within the next 2 s it comes within 2 m
-   or leaves the frame at the side. A model trained on features at time *t* (TTC, size,
-   growth rate, lateral position, class, speed) predicts that. You compare it with the
-   rule on **rides it has never seen**: precision, recall, false alarms per minute, and how
-   many seconds of warning it gives.
-
-Both give you numbers you can show, and that is what makes the AI part convincing.
+All Python except the web dashboard. React with `@react-three/fiber` was chosen over
+Angular because it has far more three.js examples and answers online.
 
 ---
 
-## Rules (this is what makes the plan rigid)
+## Rules
 
-1. **Fixed hours:** 5 blocks of 50 min + 10 min break. Same start time every day.
-2. **Every day has a "Done when".** Don't start the next day's tasks until it is met.
-3. **Commit and push at the end of every day**, even if it's broken (`wip:` prefix).
-4. **Riding is outside the 5 hours.** Record **every** ride from 27 Oct to 31 Oct.
-5. **Behind schedule?** Use the 6th hour. If you're still more than one day behind,
-   cut in this order and don't feel bad about it:
-   1. Live (non-replay) test, Day 11
-   2. Metrics charts page, Day 9
-   3. Virtual handlebar in the 3D scene
-   4. Fine-tune shrinks to 150 labelled frames (the risk model is never cut)
-6. **Feature freeze: end of Thu 5 Nov.** After that, only bug fixes, docs and the demo video.
-7. **Safety:** never touch the laptop or phone while riding. The camera mount must not
-   block the number plate, tail lamp or indicators.
+1. **Fixed sessions.** Weekdays 21:00-23:00, weekends 2 x 4 h. Stop on time and sleep.
+2. **Every day has a "Done when".** Don't start the next day's work until it is met.
+3. **Commit and push at the end of every session**, even if it's broken (`wip:` prefix).
+4. **Record every morning ride** Wed 28 Oct to Fri 30 Oct, plus about 1 h of daytime
+   riding on Sat 31 Oct (busy road + main road). Riding is not counted in the hours.
+5. **Feature freeze: end of Thu 5 Nov.** After that, only fixes, docs and the demo video.
+6. **Safety:** never touch the laptop or phone while riding. The mount must not block the
+   number plate, tail lamp or indicators.
+
+### If you fall behind
+Use an extra hour **only on a weekend day**, never by cutting weekday sleep. If you're
+still behind, cut in this order:
+1. Handlebar mounting: show the LEDs on the desk instead
+2. Event list in the dashboard (keep the video + 3D view)
+3. Detector fine-tune: 100 frames instead of 200, or keep the pretrained model and
+   list it as next step
+4. **Never cut** the learned alert model (step 4). It is the main AI result.
+
+If you work Saturdays, move Sat 31's work to Sun 1 and drop items 1 and 3.
 
 ---
 
 ## Day by day
 
-### Day 1 - Tue 27 Oct: setup + first footage
-- [ ] (1 h) Mount the rear camera. Today use your **phone** on a holder on the rear grab
-      rail, facing backwards; don't wait for a dash cam. 1080p, 30 fps. Horizon in the upper
-      third, both lanes behind you visible. Record the ride home.
-- [ ] (1 h) Order hardware (list below) so it arrives by Day 10.
-- [ ] (1 h) Python 3.11 venv: `ultralytics opencv-python pandas pyarrow scikit-learn
+### Wed 28 Oct (2 h): first footage + detection
+- [ ] Morning: mount the phone on the rear grab rail facing back, 1080p 30 fps. Horizon
+      in the upper third, both lanes behind you visible. Mark the mount position with
+      tape so it is the same every day. Record the ride to office.
+- [ ] Lunch break (15 min): **order the hardware** (list below) so it arrives by Thu 5 Nov.
+- [ ] (0.5 h) Python 3.11 venv: `ultralytics opencv-python pandas pyarrow scikit-learn
       lightgbm fastapi uvicorn pyserial`. Create the repo layout (below).
-- [ ] (2 h) `detect.py`: video in, then annotated MP4 + one row per detection
-      (`frame, t, class, conf, x1, y1, x2, y2`) as Parquet. Sample at 10 fps.
+- [ ] (1.5 h) `pipeline/detect.py`: video in, annotated MP4 out, plus a Parquet table
+      `frame, t, class, conf, x1, y1, x2, y2`. Sample at 10 fps.
 
-**Done when:** you can watch an annotated video of your own ride.
+**Done when:** you can watch an annotated video of this morning's ride.
 
-### Day 2 - Wed 28 Oct: tracking + calibration
-- [ ] (1 h) `ingest.py`: copy rides into `data/rides/<date>_<n>/`, one `meta.json` each
-      (date, duration, time of day, weather).
-- [ ] (2 h) `track.py`: ByteTrack (`model.track(..., tracker="bytetrack.yaml")`).
-      Output one table: `track_id, t, class, bbox`. Drop tracks shorter than 0.5 s.
-- [ ] (1 h) Camera calibration with an OpenCV chessboard (print it, 15-20 photos), then
-      save the intrinsics.
-- [ ] (1 h) Ground-plane homography: park the scooter and lay out 4-6 tape marks on the
-      ground behind it at measured distances. Click them in a frame and save `H`.
+### Thu 29 Oct (2 h): tracking
+- [ ] Morning: record the ride.
+- [ ] (0.5 h) `pipeline/ingest.py`: rides into `data/rides/<date>_<n>/` with `meta.json`.
+- [ ] (1.5 h) `pipeline/track.py`: ByteTrack (`model.track(..., tracker="bytetrack.yaml")`)
+      giving `track_id, t, class, bbox`. Drop tracks shorter than 0.5 s. Run overnight on
+      both rides.
 
-**Done when:** `tracks.parquet` exists for every ride so far, and `H` maps pixels to metres.
+**Done when:** `tracks.parquet` exists for both rides.
 
-### Day 3 - Thu 29 Oct: geometry + rule-based alerts
-- [ ] (2 h) `geometry.py`: bottom-centre of each box through `H` gives metres behind and
-      metres sideways. Zones: LEFT / CENTRE / RIGHT.
-- [ ] (1.5 h) TTC from scale change: slope of `log(box height)` over a 0.5 s window, so
-      `TTC = 1 / slope`. Smooth it and clip silly values.
-- [ ] (1 h) `rules.py` baseline: light LEFT/RIGHT if `TTC < 2.5 s` or distance `< 3 m`
-      in that zone. Overlay distance, TTC and lights on the video.
-- [ ] (0.5 h) Watch one ride with the overlay and write down 10 moments where it's wrong.
+### Fri 30 Oct (2 h): time-to-collision + rule baseline
+- [ ] Morning: record the ride.
+- [ ] (1 h) `pipeline/geometry.py`: TTC from box growth (slope of `log(box height)` over
+      0.5 s, `TTC = 1 / slope`, smoothed). Zone = LEFT / CENTRE / RIGHT from the box centre
+      x-position, with boundaries tuned once by eye.
+- [ ] (1 h) `pipeline/rules.py`: light LEFT/RIGHT when `TTC < 2.5 s` in that zone. Overlay
+      TTC and the two lights on the video.
 
-**Done when:** an overlay video shows the left/right lights switching on sensibly.
+**Done when:** an overlay video shows the lights switching on at sensible moments.
 
-### Day 4 - Fri 30 Oct: build the dataset
-- [ ] (0.5 h) Split rides: Days 1-3 = **train**, Days 4-5 = **test** (split by ride,
-      never by frame, so nothing leaks).
-- [ ] (0.5 h) Pull ~400 varied frames from the train rides (day/night, jams, highway).
-- [ ] (0.5 h) Pre-label them with the pretrained model (export YOLO format).
-- [ ] (3 h) Fix the labels in **Label Studio** (`pip install label-studio`). Classes:
+### Sat 31 Oct (8 h): distance + build the dataset + fine-tune (AI #1)
+- [ ] Morning: about 1 h daytime ride (busy market road + a main road) for extra footage.
+- [ ] (1 h) Focal length: photograph a car at 3 m, 5 m and 10 m (measured with tape),
+      solve `f = h_pixels * Z / H_real`. Add distance to `geometry.py`.
+- [ ] (0.5 h) Split by ride: Wed-Fri = **train**, Saturday's ride = **test**. Never split
+      frames of the same ride between train and test.
+- [ ] (0.5 h) Pull ~200 varied frames from train rides, ~50 from the test ride. Pre-label
+      them with the pretrained model.
+- [ ] (3.5 h) Fix labels in Label Studio (`pip install label-studio`). Classes:
       `car, bus, truck, two_wheeler, auto_rickshaw, bicycle, person`.
-- [ ] (0.5 h) Label 80 frames from the **test** rides the same way.
-
-**Done when:** 300+ train frames and 80 test frames are labelled and exported.
-
-### Day 5 - Sat 31 Oct: fine-tune the detector (AI #1)
-- [ ] (1 h) Upload the dataset to Kaggle or Colab (free GPU). Train `yolo11n` and `yolo11s`,
-      about 50 epochs.
-- [ ] (1 h) Evaluate on the 80 test frames: mAP50, mAP50-95, per-class recall,
-      pretrained vs fine-tuned. Save the table to `results/detector.md`.
-- [ ] (1 h) Export the best one to ONNX, check CPU FPS on the laptop.
-- [ ] (2 h) Re-run detect, track and geometry on **all** rides with the new model
-      (let the rest run overnight).
+- [ ] (1.5 h) Upload to Kaggle (free GPU), train `yolo11n` about 50 epochs.
+- [ ] (1 h) Evaluate on the 50 test frames: mAP50 and per-class recall, pretrained vs
+      fine-tuned. Save to `results/detector.md`. Start re-running the pipeline on all
+      rides with the new model overnight.
 
 **Done when:** `results/detector.md` has the before/after table.
 
-### Day 6 - Sun 1 Nov: the learned alert model (AI #2)
-- [ ] (1.5 h) `events.py` auto-labels: a track at time *t* is positive if within the next
-      2 s it gets closer than 2 m or leaves the frame at the left/right edge.
-- [ ] (1 h) Features at time *t*: TTC, distance, sideways position, box area, growth
-      rate, class, approach speed, track age.
-- [ ] (1 h) Train LightGBM on train rides; tune the threshold on one validation ride.
-- [ ] (1.5 h) Compare with `rules.py` on the **test rides**: precision, recall, false
-      alarms per minute, median warning time. Save to `results/alerts.md` + a PR curve.
+### Sun 1 Nov (8 h): learned alert model (AI #2) + backend
+- [ ] (1.5 h) `pipeline/events.py` auto-labels from the future: a track at time *t* is
+      positive if in the next 2 s it gets closer than 2 m or leaves the frame at the
+      left/right edge (it passed you).
+- [ ] (1 h) Features at *t*: TTC, distance, zone, box area, growth rate, class, track age.
+- [ ] (1.5 h) `pipeline/risk.py`: LightGBM on train rides, pick the threshold on one
+      train ride held back for validation.
+- [ ] (1 h) Model vs rule on the **test ride**: precision, recall, false alarms per
+      minute, median warning time. Save to `results/alerts.md` + a PR curve PNG.
+- [ ] (3 h) `api/api.py` (FastAPI): `GET /rides`, `/rides/{id}`, `/rides/{id}/frames`,
+      `/rides/{id}/events`, video streaming. One pytest per endpoint.
 
-**Done when:** you have one table showing model vs rule on unseen rides.
+**Done when:** `results/alerts.md` has the comparison and the API serves a ride.
 
-### Day 7 - Mon 2 Nov: backend
-- [ ] (3 h) `api.py` (FastAPI): `GET /rides`, `/rides/{id}` (meta + metrics),
-      `/rides/{id}/frames?from=&to=` (tracks, metres, risk), `/rides/{id}/events`,
-      video file streaming.
-- [ ] (1.5 h) `WS /rides/{id}/replay`: pushes per-frame state at real-time speed,
-      including the LEFT/RIGHT light state.
-- [ ] (0.5 h) A pytest for each endpoint.
+### Mon 2 Nov (2 h): replay stream
+- [ ] (1.5 h) `WS /rides/{id}/replay`: per-frame state (vehicles, distance, zone, risk,
+      LEFT/RIGHT light) at real-time speed.
+- [ ] (0.5 h) Test it with a small Python WebSocket client.
 
-**Done when:** `uvicorn api:app` serves a ride and the WebSocket streams frames.
+**Done when:** the WebSocket streams a whole ride.
 
-### Day 8 - Tue 3 Nov: dashboard part 1 (React + three.js)
+### Tue 3 Nov (2 h): dashboard, 3D view
 - [ ] (0.5 h) `npm create vite@latest web -- --template react-ts`, add `three
       @react-three/fiber @react-three/drei`.
-- [ ] (2.5 h) Bird's-eye 3D scene: road plane with lane lines, a simple scooter made of
-      primitives, each tracked vehicle as a box with its class size at its metres
-      position, coloured green/amber/red by risk.
-- [ ] (2 h) Video panel next to it, synced to the WebSocket replay; play/pause/seek.
+- [ ] (1.5 h) 3D top-down scene: road plane with lane lines, scooter built from simple
+      shapes, each vehicle a box at its distance/zone, coloured green/amber/red by risk.
 
-**Done when:** you press play and the video and the 3D scene move together.
+**Done when:** vehicles move in the 3D view while a replay streams.
 
-### Day 9 - Wed 4 Nov: dashboard part 2
-- [ ] (1.5 h) Two virtual handlebar lights in the scene that match the alert state.
-- [ ] (1.5 h) Event timeline under the video; click an event to jump there.
-- [ ] (1.5 h) Metrics page: detector table, model vs rule, PR curve.
-- [ ] (0.5 h) Ride selector.
+### Wed 4 Nov (2 h): dashboard, video + events
+- [ ] (1.5 h) Video panel next to the 3D view, synced to the replay; play/pause.
+- [ ] (0.5 h) Event list: click an event to jump to it.
 
-**Done when:** someone who has never seen the project can understand a ride in 30 seconds.
+**Done when:** video and 3D view move together.
 
-### Day 10 - Thu 5 Nov: handlebar lights (feature freeze tonight)
-- [ ] (1 h) Flash MicroPython on the ESP32. Two WS2812 LED sticks via the `neopixel` module.
-- [ ] (1 h) Serial protocol: one line per change, e.g. `L2 R0\n` (0 off, 1 amber,
+### Thu 5 Nov (2 h): handlebar lights (feature freeze tonight)
+- [ ] (0.5 h) Flash MicroPython on the ESP32, light two WS2812 sticks with `neopixel`.
+- [ ] (0.5 h) Serial protocol: one line per change, e.g. `L2 R0\n` (0 off, 1 amber,
       2 red flashing).
-- [ ] (1.5 h) `alert_out.py`: replay a ride on the laptop and the real LEDs follow it.
-      Measure delay (target under 100 ms).
-- [ ] (1.5 h) Mount both sticks on the handlebar near the mirrors (cable ties, heat-shrink),
-      powered by a USB power bank. Test visibility in daylight.
+- [ ] (1 h) `alert_out.py`: replay a ride on the laptop and the real LEDs follow it.
 
-**Done when:** a recorded ride plays on the laptop and the physical lights blink in sync.
+**Done when:** a recorded ride plays and the LEDs on the desk blink in sync.
 
-### Day 11 - Fri 6 Nov: end-to-end test + fixes
-- [ ] (2 h) Live-ish test, **standing still**: phone streams with the IP Webcam app, laptop
-      runs the pipeline, LEDs react while a friend rides past on a scooter in a quiet lane.
-- [ ] (2 h) Fix the worst bugs from the whole week.
-- [ ] (1 h) Write down FPS, delay, false alarms per minute and model size. These go
-      in the README.
+### Fri 6 Nov (2 h, Dhanteras): mount + end-to-end
+- [ ] (1 h) Mount the sticks on the handlebar near the mirrors (cable ties, heat-shrink),
+      USB power bank. Check they're visible in daylight.
+- [ ] (1 h) Run the whole thing once from a clean start; fix the worst bug.
 
-**Done when:** the full pipeline runs once without you touching code.
+**Done when:** one command starts the backend, dashboard and LEDs.
 
-### Day 12 - Sat 7 Nov: package it
+### Sat 7 Nov (5 h): package it
 - [ ] (1.5 h) README: problem, architecture diagram, results tables, how to run, limits
-      and next steps (Raspberry Pi 5 on the scooter, night riding, rain).
-- [ ] (2 h) 2-minute demo video: ride clip, 3D dashboard, LEDs blinking, results table.
+      (night, rain, phone camera) and next steps (Raspberry Pi 5 on the scooter, live mode).
+- [ ] (2 h) 2-minute demo video: ride clip, dashboard, LEDs blinking, results.
       **Blur faces and number plates** in anything you publish.
-- [ ] (1 h) Clean the repo, pin versions, `make demo` / one-command start.
-- [ ] (0.5 h) One-slide summary + the 3 numbers you'll lead with.
+- [ ] (1 h) Clean the repo, pin versions, check the README steps work from a fresh clone.
+- [ ] (0.5 h) Pick the 3 numbers you'll lead with (e.g. mAP gain, false alarms per
+      minute vs rule, seconds of warning).
 
 **Done when:** a stranger can clone the repo and run the demo from the README.
 
-### Sun 8 Nov - Diwali. No work.
+### Sun 8 Nov: Diwali. No work.
 
 ---
 
@@ -211,7 +205,7 @@ Both give you numbers you can show, and that is what makes the AI part convincin
 
 ```
 rear-alert/
-  pipeline/   detect.py track.py geometry.py rules.py events.py risk.py ingest.py
+  pipeline/   ingest.py detect.py track.py geometry.py rules.py events.py risk.py
   api/        api.py tests/
   web/        React + Vite + react-three-fiber
   firmware/   main.py (MicroPython, ESP32)
@@ -221,27 +215,23 @@ rear-alert/
   results/    detector.md alerts.md plots
 ```
 
-This project probably deserves its **own repository** rather than living next to the
-folding-robot code. That way the GitHub link you share is only about this.
-
-## Hardware to order on Day 1
+## Hardware (order Wed 28 Oct)
 
 | Item | Why |
 |---|---|
-| Phone holder for the rear grab rail (or a rear dash cam later) | Camera mount, start today |
+| Phone holder for the rear grab rail | Camera mount (use your own phone) |
 | ESP32 DevKit (USB) | Drives the lights, runs MicroPython |
 | 2 x WS2812B 8-LED sticks | Bright enough for daylight, one data pin, amber/red |
-| Jumper wires, heat-shrink, cable ties, small project box | Handlebar mounting |
+| Jumper wires, heat-shrink, cable ties | Handlebar mounting |
 | USB power bank + 2 m USB cable | Powers the ESP32 on the scooter |
-| A4 chessboard printout + measuring tape + masking tape | Calibration (Day 2) |
+| Measuring tape | Focal length measurement (Sat 31) |
 
 Robu.in, Robocraze and Amazon.in usually deliver in 2-5 days. Check stock before ordering.
 
 ## Footage checklist
 
-- 1 hour of 1080p is about 6 GB, so carry a spare SD card or clear the phone every night.
-- Aim for **4-6 hours** of riding over Days 1-5: commutes, a busy market road, at least
-  one night ride and one main road.
-- Keep the mount in the **same position** every day, or the homography from Day 2 breaks.
-  Mark it with tape.
-- Batch processing a few hours of video on a laptop CPU takes hours, so run it overnight.
+- 1 hour of 1080p is about 6 GB; copy rides to the laptop every evening.
+- Target: 3 morning rides + 1 h on Saturday, about 2-2.5 h of daytime footage.
+- Keep the phone mount in the same taped position every day.
+- Running the pipeline on hours of video takes a while on a laptop CPU, so start it
+  before you sleep.
